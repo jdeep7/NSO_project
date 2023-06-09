@@ -195,6 +195,19 @@ done
 
 ############ update hosts file ##################
 
+log "Generating hosts file."
+hosts_file="hosts"
+echo "[bastion]" > "$hosts_file"
+echo "$TAG_bastion ansible_ssh_common_args='-F $ssh_config_file'" >> "$hosts_file"
+echo "" >> "$hosts_file"
+echo "[proxy]" >> "$hosts_file"
+echo "$TAG_proxy ansible_ssh_common_args='-F $ssh_config_file'" >> "$hosts_file"
+echo "" >> "$hosts_file"
+echo "[servers]" >> "$hosts_file"
+for ((i=1; i<=server_count; i++)); do
+  server_name="$TAG$i"
+  echo "$server_name ansible_ssh_common_args='-F $ssh_config_file'" >> "$hosts_file"
+done
 
 
 ############ to run ansible playbook #####################
