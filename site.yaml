@@ -38,8 +38,8 @@
      state: restarted
 
 
-  - name: Executing Application 
-    file: 
+  - name: removing any redundent files from before
+    file:
       state: absent
       path: /home/ubuntu/app2.py
 
@@ -48,11 +48,17 @@
      src: ./application2.py
      dest: ~/app.py
 
+  - name: transplant gunicorn config file
+    copy:
+     src: ./g_unicorn_config.py
+     dest: ~/g_unicorn_config.py
+
   - name: transplant gunirun
     copy:
-     src: ./gunirun.sh
-     dest: ~/gunirun.sh
+     src: ./gunicorn_run.sh
+     dest: ~/gunicorn_run.sh
 
   - name: Change PWD to another path
     become: yes
-    shell: bash /home/ubuntu/gunirun.sh 
+    shell: bash /home/ubuntu/gunicorn_run.sh
+
