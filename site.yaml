@@ -2,7 +2,7 @@
   tasks:
   - name: apt-update
     become: yes
-    apt: 
+    apt:
        update_cache: yes
 
   - name: apt-install pip
@@ -31,7 +31,7 @@
      src: ./snmp
      dest: /etc/snmp/snmpd.conf
 
-  - name: Restarting snmpd 
+  - name: Restarting snmpd
     become: yes
     ansible.builtin.service:
      name: snmpd
@@ -62,3 +62,26 @@
     become: yes
     shell: bash /home/ubuntu/gunicorn_run.sh
 
+- hosts: proxy
+  tasks:
+  - name: apt-update cache
+    become: yes
+    apt:
+       update_cache: yes
+
+  - name: Installing HAProxy
+    become: yes
+    apt:
+      name: haproxy
+
+  - name: copy HAproxy config file from source to dest server
+    become: yes
+    template:
+     src: ./HAproxy
+     dest: /etc/haproxy/haproxy.cfg
+
+  - name: haproxy restart
+    become: yes
+    ansible.builtin.service:
+     name: haproxy
+     state: restarted
