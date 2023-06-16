@@ -194,6 +194,8 @@ echo "" >> "$ssh_config_file"
 done
 
 ############ update hosts file ##################
+log "removing previous hosts file"
+rm -f hosts
 
 log "Generating hosts file."
 hosts_file="hosts"
@@ -211,3 +213,14 @@ done
 
 
 ############ to run ansible playbook #####################
+
+ansible-playbook -i "hosts" site.yaml
+
+
+############ checking if all servers are reacheable via proxy #####################
+
+for ((i=1; i<=server_count; i++)); do
+  curl http://$proxy_ip 
+done
+
+log "OK"
