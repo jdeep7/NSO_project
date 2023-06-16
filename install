@@ -136,7 +136,7 @@ server_count=$(cat server.conf)
 log "we need $server_count servers launching them"
 log "Waiting for nodes to complete their installation."
 
-for ((i=1; i<=server_count: i++)); do
+for ((i=1; i<=server_count; i++)); do
   server_name="'$TAG'$i"
   echo "creating server: $server_name"
   openstack server create --flavor "$flavor_id" --image "$image_id" --security-group "$security_group" --network "$subnet" --key-name "$keypair" --wait "$server_name"
@@ -220,7 +220,7 @@ ansible-playbook -i "hosts" site.yaml
 ############ checking if all servers are reacheable via proxy #####################
 
 for ((i=1; i<=server_count; i++)); do
-  curl http://$proxy_ip 
+  curl http://$proxy_ip
 done
 
 log "OK"
