@@ -1,0 +1,87 @@
+- hosts: servers
+  tasks:
+  - name: apt-update
+    become: yes
+    apt:
+       update_cache: yes
+
+  - name: apt-install pip
+    become: yes
+    apt:
+      name: python3-pip
+
+  - name: installing flask
+    become: yes
+    pip:
+       name: flask
+
+  - name: installing gunicorn
+    become: yes
+    pip:
+      name: gunicorn
+
+  - name: Installing snmpd
+    become: yes
+    apt:
+      name: snmpd
+
+  - name: binary files copy snmpd
+    become: yes
+    copy:
+     src: ./snmp
+     dest: /etc/snmp/snmpd.conf
+
+  - name: Restarting snmpd
+    become: yes
+    ansible.builtin.service:
+     name: snmpd
+     state: restarted
+
+
+  - name: removing any redundent files from before
+    file:
+      state: absent
+      path: /home/ubuntu/app2.py
+
+  - name: copy application2.py
+    copy:
+     src: ./application2.py
+     dest: ~/app.py
+
+  - name: transplant gunicorn config file
+    copy:
+     src: ./g_unicorn_config.py
+     dest: ~/g_unicorn_config.py
+
+  - name: transplant gunirun
+    copy:
+     src: ./gunicorn_run.sh
+     dest: ~/gunicorn_run.sh
+
+  - name: Change PWD to another path
+    become: yes
+    shell: bash /home/ubuntu/gunicorn_run.sh
+
+- hosts: proxy
+  tasks:
+  - name: apt-update cache
+    become: yes
+    apt:
+       update_cache: yes
+
+  - name: Installing HAProxy
+    become: yes
+    apt:
+      name: haproxy
+
+  - name: copy HAproxy config file from source to dest server
+    become: yes
+    template:
+     src: ./HAproxy
+     dest: /etc/haproxy/haproxy.cfg
+
+  - name: haproxy restart
+    become: yes
+    ansible.builtin.service:
+     name: haproxy
+     state: restarted
