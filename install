@@ -1,226 +1,144 @@
 #!/bin/bash
 
-# Check if the required arguments are provided
-if [ $# -ne 3 ]; then
-  echo "Usage: $0 <openrc> <tag> <ssh_key>"
-  exit 1
+# Usage: install <openrc> <tag> <ssh_key>
+#                   $1      $2     $3
+
+. $1
+
+rm /root/.ssh/known_hosts $3 > /dev/null 2>&1 # Remove known_hosts to avoid SSH key mismatch
+# Generating keys.
+openstack keypair delete $3 > /dev/null 2>&1
+openstack keypair create $3 > ./storage/$3
+cp ./storage/$3 ./operate_files/$3
+echo "Generated keys."
+
+echo "Checking for free floating IPs"
+FREE_FLOATING_IPS=$(openstack floating ip list --status DOWN -c "Floating IP Address" -f value)
+
+if [ -z "$FREE_FLOATING_IPS" ]; then
+    echo "No free floating IPs found, creating two"
+    FLOATING_IP1=$(openstack floating ip create ext-net --tag $2 -f value -c floating_ip_address)
+    FLOATING_IP2=$(openstack floating ip create ext-net --tag $2 -f value -c floating_ip_address)
+    echo "Floating IPs created: $FLOATING_IP1 and $FLOATING_IP2"
+else
+    IP_COUNT=$(echo "$FREE_FLOATING_IPS" | wc -l)
+    
+    if [ "$IP_COUNT" -ge 2 ]; then
+        FLOATING_IP1=$(echo "$FREE_FLOATING_IPS" | head -n 1)
+        FLOATING_IP2=$(echo "$FREE_FLOATING_IPS" | head -n 2 | tail -n 1)
+        echo "Using existing free floating IPs: $FLOATING_IP1 and $FLOATING_IP2"
+    else
+        FLOATING_IP1=$(echo "$FREE_FLOATING_IPS")
+        FLOATING_IP2=$(openstack floating ip create --tag $2 ext-net -f value -c floating_ip_address)
+        echo "Using existing free IP $FLOATING_IP1 and created new IP $FLOATING_IP2"
+    fi
 fi
 
-# Assign arguments to variables
-OPENRC="$1"
-TAG="$2"
-SSH_KEY="$3"
+# Create network and subnet
+NETWORK_NAME="network_$2"
+SUBNET_NAME="subnet_$2"
+CIDR="10.0.0.0/24"  
 
-# Source the OpenStack RC file for credeantials
-source "$OPENRC"
+echo "Creating network: $NETWORK_NAME"
+NETWORK_ID=$(openstack network create --tag $2 $NETWORK_NAME -f value -c id)
 
-# Function to log the deployment steps and to display date and time
-log() {
-  echo "$(date +'%Y-%m-%d %H:%M:%S') $@"
+if [ -z "$NETWORK_ID" ]; then
+    echo "Failed to create network"
+    exit 1
+fi
+
+echo "Creating subnet: $SUBNET_NAME"
+openstack subnet delete $SUBNET_NAME 2>/dev/null
+SUBNET_ID=$(openstack subnet create $SUBNET_NAME --tag $2 --network $NETWORK_ID --subnet-range $CIDR -f value -c id)
+
+if [ -z "$SUBNET_ID" ]; then
+    echo "Failed to create subnet"
+    exit 1
+fi
+
+echo "Network $NETWORK_NAME and subnet $SUBNET_NAME created successfully"
+
+# Create and configure router
+ROUTER_NAME="router_$2"
+echo "Creating router: $ROUTER_NAME"
+openstack router delete $ROUTER_NAME 2>/dev/null
+ROUTER_ID=$(openstack router create --tag $2 $ROUTER_NAME -f value -c id)
+
+if [ -z "$ROUTER_ID" ]; then
+    echo "Failed to create router"
+    exit 1
+fi
+
+echo "Setting external gateway for router"
+openstack router set $ROUTER_NAME --external-gateway ext-net
+
+echo "Adding subnet interface to router"
+openstack router add subnet $ROUTER_NAME $SUBNET_NAME
+
+echo "Router $ROUTER_NAME created and configured successfully"
+
+
+# Create security group
+SECURITY_GROUP_NAME="security_$2"
+SECURITY_GROUP_NAME2="security2_$2"
+echo "Creating security group: $SECURITY_GROUP_NAME"
+openstack security group delete $SECURITY_GROUP_NAME 2>/dev/null
+openstack security group delete $SECURITY_GROUP_NAME2 2>/dev/null
+openstack security group create $SECURITY_GROUP_NAME --tag $2
+openstack security group create $SECURITY_GROUP_NAME2 --tag $2
+
+# Configure security group rules
+echo "Configuring security group rules"
+openstack security group rule create $SECURITY_GROUP_NAME --protocol tcp --remote-ip 0.0.0.0/0
+openstack security group rule create $SECURITY_GROUP_NAME --protocol udp --remote-ip 0.0.0.0/0
+openstack security group rule create $SECURITY_GROUP_NAME --protocol icmp --remote-ip 0.0.0.0/0
+
+
+
+## VM creation function
+create_vm() {
+    local VM_NAME=$1
+    local TAG=$2
+    local KEY_NAME=$3
+    
+    echo "Key Name is: $KEY_NAME"
+    echo "Creating VM: $VM_NAME"
+    openstack server create \
+        --flavor "2C-2GB-20GB" \
+        --image "Ubuntu 20.04 Focal Fossa x86_64" \
+        --security-group $SECURITY_GROUP_NAME \
+        --key-name "$KEY_NAME" \
+        --network $NETWORK_NAME \
+        "$VM_NAME"
 }
 
-log "Starting deployment of $TAG using $OPENRC for credentials."
+# Create 5 VMs
+create_vm "bastion_$2" "$2" "$3"
+create_vm "proxy_$2" "$2" "$3"
+create_vm "vm1_$2" "$2" "$3"
+create_vm "vm2_$2" "$2" "$3"
+create_vm "vm3_$2" "$2" "$3"
 
+echo "VM creation completed"
 
-# Check the availability of SSH key
-keypair=$(openstack keypair show "$TAG"_key --format value -c name --quiet)
+# Assign floating IPs to bastion and proxy
+echo "Assigning floating IP $FLOATING_IP1 to bastion_$2"
+openstack server add floating ip "bastion_$2" $FLOATING_IP1
 
-log "Checking if we have '$TAG'_key available."
+echo "Assigning floating IP $FLOATING_IP2 to proxy_$2"
+openstack server add floating ip "proxy_$2" $FLOATING_IP2
 
-# Add SSH key if not available
-if [ -z "$keypair" ]; then
-  log "Adding '$TAG'_key associated with $SSH_KEY."
-  keypair=$(openstack keypair create "$TAG"_key --public-key "$SSH_KEY" --format value -c name --quiet)
-else
-  log "'$TAG'_key keypair already exists"
-fi
+echo "Floating IPs assigned successfully"
 
-# Check the existence of network, subnet, and router
-network=$(openstack network show "$TAG"_network --format value -c name --quiet)
-subnet=$(openstack subnet show "$TAG"_subnet --format value -c name --quiet)
-router=$(openstack router show "$TAG"_router --format value -c name --quiet)
-
-# Add network if not exists
-if [ -z "$network" ]; then
-  log "Did not detect '$TAG'_network in the OpenStack project, adding it."
-  network=$(openstack network create "$TAG"_network --format value -c name --quiet)
-else
-  log "'$TAG'_network already exists"
-fi
-
-# Add subnet if not exists
-if [ -z "$subnet" ]; then
-  log "Did not detect '$TAG'_subnet in the OpenStack project, adding it."
-  subnet=$(openstack subnet create "$TAG"_subnet --network "$network" --subnet-range 10.0.1.0/27 )
-else
-  log "'$TAG'_subnet already exists"
-fi
-
-# Add router if not exists
-if [ -z "$router" ]; then
-  log "Did not detect '$TAG'_router in the OpenStack project, adding it."
-  router=$(openstack router create "$TAG"_router)
-else
-  log "'$TAG'_router already exists"
-fi
-
-# Add networks to router
-log "Adding networks to router."
-openstack router set "$TAG"_router --external-gateway ext-net
-openstack router add subnet "$TAG"_router "$TAG"_subnet
-
-log "Done."
-
-# adding security group
-
-log "Adding security group(s)."
-security_group=$(openstack security group create "$TAG"_security_group --format value -c name --quiet)
-openstack security group rule create --protocol tcp --dst-port 22 "$security_group"
-openstack security group rule create --protocol tcp --dst-port 80 "$security_group"
-openstack security group rule create --protocol icmp "$security_group"
-openstack security group rule create --protocol tcp --dst-port 5000 "$security_group"
-openstack security group rule create --protocol udp --dst-port 6000 "$security_group"
-
-######################################
-
-##### Check if there are any floating IPs available #####
-
-floating_ips=$(openstack floating ip list --status ACTIVE --format value -c Floating IP Address --quiet )
-if [-n "$floating_ips"]; then
-  available_ips=($floating_ips)
-  echo "available floating IPs are"
-  for ip in "${available_ips[@]}"; do
-    echo "$ip"
-  done
-
-  first_ip="${available_ips[0]}"
-  second_ip="${available_ips[1]}"
-
-else
-  echo "No available floating IPs. Creating new floating IPs..."
-  first_ip=$(openstack floating ip create ext-net)
-  second_ip=$(openstack floating ip create ext-net)
-
-########### Searching for image ubuntu 20.04 #############
-
-log "Detecting suitable image, looking for Ubuntu 20.04;"
-image_name="Ubuntu 20.04 Focal Fossa 20200423"
-image_id=$(openstack image list --name "$image_name" --format value -c ID)
-flavor_id=$(openstack flavor show 1C-1GB-20GB --format value -c id)
-# checking if there is a server named $TAG_bastion
-bastion=$(openstack server list --name "$TAG"bastion --format value -c Name --quiet)
-if [ -z "$bastion"]; then
-  log "Did not detect '$TAG'_bastion, launching it."
-  openstack server create --flavor "$flavor_id" --image "$image_id" --security-group "$security_group" --network "$network" --key-name "$keypair" --wait "$TAG"_bastion
-  openstack server add floating ip "$TAG"_bastion "$first_ip"
-else
-  log "'$TAG'_bastion already exists"
-  openstack server add floating ip "$TAG"_bastion "$first_ip"
-fi
-
-###### checking if there are any servers with name proxy and launching it if not found #######
-proxy=$(openstack server list --name "$TAG"_proxy --format value -c Name --quiet)
-if [ -z "$proxy"]; then
-  log "Did not detect '$TAG'_proxy, launching it."
-  openstack server create --flavor "$flavor_id" --image "$image_id" --security-group "$security_group" --network "$network" --key-name "$keypair" --wait "$TAG"_proxy
-  openstack server add floating ip "$TAG"_proxy "$second_ip"
-else
-  log "'$TAG'_proxy already exists"
-  openstack server add floating ip "$TAG"_proxy "$second_ip"
-fi
-
-########## Reading the value in server.conf ################
-
-server_count=$(cat server.conf)
-
-log "we need $server_count servers launching them"
-log "Waiting for nodes to complete their installation."
-
-for ((i=1; i<=server_count; i++)); do
-  server_name="'$TAG'$i"
-  echo "creating server: $server_name"
-  openstack server create --flavor "$flavor_id" --image "$image_id" --security-group "$security_group" --network "$subnet" --key-name "$keypair" --wait "$server_name"
+# Store IPs in files
+echo "$FLOATING_IP1" > ./storage/ips
+echo "$FLOATING_IP2" >> ./storage/ips
+# Get and store local IPs for vm1, vm2, and vm3
+for vm in "vm1_$2" "vm2_$2" "vm3_$2"; do
+    IP=$(openstack server show $vm -f value -c addresses | sed -n "s/.*'\(.*\)'.*/\1/p")
+    echo "$IP" >> ./storage/ips
 done
-
-log "All nodes are done."
-
-########### building base ssh config file #################
-
-log "Building base SSH config file, saved to $TAG_SSHconfig (current folder)."
-
-ssh_config_file="'$TAG'_SSHconfig"
-echo "# Automated building of base SSH config file" > "$ssh_config_file"
-
-######### adding global constants ###########
-
-echo "Host *" >> "$ssh_config_file"
-echo "    StrictHostKeyChecking no" >> "$ssh_config_file"
-echo "    ForwardAgent yes" >> "$ssh_config_file"
-echo "" >> "$ssh_config_file"
-
-######### Adding entries for bastion and proxy servers for config file ##########
-
-echo "Host $TAG_bastion" >> "$ssh_config_file"
-echo "    HostName $first_ip" >> "$ssh_config_file"
-echo "    User ubuntu" >> "$ssh_config_file"
-echo "    ControlMaster yes" >> "$ssh_config_file"
-echo "    IdentityFile $SSH_KEY" >> "$ssh_config_file"
-echo "    ForwardAgent yes" >> "$ssh_config_file"
-echo "    ControlPath $SSH_KEY-%r@%h:%p" >> "$ssh_config_file"
-echo "" >> "$ssh_config_file"
-
-######## finding the private ip for proxy server for adding it in ssh config file##############
-
-proxy_ip=$(openstack server show "$proxy" -c addresses -f value | awk -F "=" '{print $2}')
-echo "Host $TAG_proxy" >> "$ssh_config_file"
-echo "    HostName $proxy_ip" >> "$ssh_config_file"
-echo "    User ubuntu" >> "$ssh_config_file"
-echo "    IdentityFile $SSH_KEY" >> "$ssh_config_file"
-echo "    ProxyCommand ssh -W %h:%p $TAG_bastion" >> "$ssh_config_file"
-echo "" >> "$ssh_config_file"
-
-########### writing a loop to go through the servers to add for ssh config file #########
-
-for ((i=1; i<=server_count; i++)); do
-  server_name="$TAG$i"
-  private_ip=$(openstack server show "$server_name" -c addresses -f value | awk -F "=" '{print $2}')
-
-  echo "Host $server_name" >> "$ssh_config_file"
-  echo "    HostName $private_ip" >> "$ssh_config_file"
-  echo "    User ubuntu" >> "$ssh_config_file"
-  echo "    IdentityFile $SSH_KEY" >> "$ssh_config_file"
-  echo "    ProxyCommand ssh -W %h:%p $TAG_bastion" >> "$ssh_config_file"
-echo "" >> "$ssh_config_file"
-done
-
-############ update hosts file ##################
-log "removing previous hosts file"
-rm -f hosts
-
-log "Generating hosts file."
-hosts_file="hosts"
-echo "[bastion]" > "$hosts_file"
-echo "$TAG_bastion ansible_ssh_common_args='-F $ssh_config_file'" >> "$hosts_file"
-echo "" >> "$hosts_file"
-echo "[proxy]" >> "$hosts_file"
-echo "$TAG_proxy ansible_ssh_common_args='-F $ssh_config_file'" >> "$hosts_file"
-echo "" >> "$hosts_file"
-echo "[servers]" >> "$hosts_file"
-for ((i=1; i<=server_count; i++)); do
-  server_name="$TAG$i"
-  echo "$server_name ansible_ssh_common_args='-F $ssh_config_file'" >> "$hosts_file"
-done
+cd install_files
+bash install_software.sh $3 $FLOATING_IP1
 
 
-############ to run ansible playbook #####################
-
-ansible-playbook -i "hosts" site.yaml
-
-
-############ checking if all servers are reacheable via proxy #####################
-
-for ((i=1; i<=server_count; i++)); do
-  curl http://$proxy_ip
-done
-
-log "OK"
