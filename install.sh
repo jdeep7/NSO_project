@@ -10,6 +10,21 @@ SECONDS=0 # Using this to find how much time the solution takes to deploy
 : ${3:?" Please specify the openrc, tag, and ssh_key"}
 
 
+# Check if jq is already installed
+if dpkg -l | grep -q jq; then
+  echo "jq is already installed."
+else
+  echo "jq is not installed. Installing jq..."
+  sudo apt-get install -y jq
+fi
+
+# Confirm installation
+if command -v jq >/dev/null 2>&1; then
+  echo "jq has been installed successfully."
+else
+  echo "Failed to install jq."
+fi
+
 cd_time=$(date)
 openrc_sr=${1}     # Fetching the openrc access file
 tag_sr=${2}        # Fetching the tag for easy identification of items
