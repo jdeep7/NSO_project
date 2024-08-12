@@ -1,3 +1,5 @@
+#!/bin/python
+
 import os
 import flask 
 import platform
@@ -30,10 +32,12 @@ def index():
             if rtt == "0":
                 pingStr=Time + " " + node + " N/A"
             else:
-                pingStr=Time + " " + node + " " + rtt + " ms"
+                pingStr=Time + " " + node + " " + rtt + " ms "
                 
             WORDS.append(pingStr)
 
     returnStr='\n'.join(WORDS)
     return returnStr + "\n"
-    
+
+if __name__ == '__main__':
+  app.run(host = '0.0.0.0', port = 5000, debug = True)

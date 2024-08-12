@@ -1,18 +1,21 @@
-#Simple flask services/applications for various assignments.
-# 
-# main.py: Online calculator, supports only 'add'.
-# application2.py: Replies with a string containing the Time and hostname.
-# assignment2.py: Replies with an HTML formatted string containing the Time and hostname.
+Instructions to run the script -
+The three scripts can be run in the following way
 
-#export FLASK_APP=<filename>
-#export FLASK_RUN_HOST=<localhost|0.0.0.0>
-#export FLASK_RUN_PORT=8210
+To run install mode 
+1. Change current directory to NSO_A2
+2. Run the command - ./install.sh <openrc> <tag> <ssh_key>
 
+To run install mode 
+1. Change current directory to NSO_A2
+2. Run the command - ./operate.sh <openrc> <tag> <ssh_key>
 
+To run cleanup mode 
+1. Change current directory to NSO_A2
+2. Run the command - ./cleanup.sh <openrc> <tag> <ssh_key>
 
-Usage Example:
-export FLASK_APP=main.py
-export FLASK_RUN_HOST=localhost
-export FLASK_RUN_PORT=8210
-flask run
+Where <openrc> pertains to the rc file with access credentials to the cloud, <tag> pertains to any simple, preferably alphanumeric
+string for easier identification of created items (for example, srmu21), 
+the <ssh_key> pertains to the SSH key to be used for SSH access.
 
+Note - If there are symbols such as ' or " present in the name of the rc file, please remove the symbols by renaming the file before 
+passing it as an argument.

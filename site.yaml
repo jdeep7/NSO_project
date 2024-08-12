@@ -1,87 +1,116 @@
-- hosts: servers
+---
+- hosts: webservers
+  any_errors_fatal: true
+  gather_facts: yes
+  become: yes
   tasks:
-  - name: apt-update
-    become: yes
-    apt:
-       update_cache: yes
+    - name: Update the repositories cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      
+    - name: Install Python3-pip
+      apt:
+         name: python3-pip
+         state: present
+         
+    - name: Install flask using 'pip3' executable
+      ansible.builtin.pip:
+        name: flask
+        executable: pip3
+        state: latest
 
-  - name: apt-install pip
-    become: yes
-    apt:
-      name: python3-pip
+    - name: Upload the application to the servers
+      copy:
+        src: ./service.py
+        dest: /home/ubuntu
+        owner: ubuntu
+        group: ubuntu
+        mode: 0644
 
-  - name: installing flask
-    become: yes
-    pip:
-       name: flask
+    - name: Run the application
+      shell: python3 /home/ubuntu/service.py
+      async: 3600
+      poll: 0
+      
+    - name: Install the snmpdaemon
+      apt:
+              name: snmpd
+              state: latest
+    
+    - name: Copy the snmpd config file
+      ansible.builtin.copy:
+              src: ./snmpd.conf
+              dest: /etc/snmp/snmpd.conf
 
-  - name: installing gunicorn
-    become: yes
-    pip:
-      name: gunicorn
+    - name: Run the snmpdaemon
+      service:
+              name: snmpd
+              state: restarted 
 
-  - name: Installing snmpd
-    become: yes
-    apt:
-      name: snmpd
-
-  - name: binary files copy snmpd
-    become: yes
-    copy:
-     src: ./snmp
-     dest: /etc/snmp/snmpd.conf
-
-  - name: Restarting snmpd
-    become: yes
-    ansible.builtin.service:
-     name: snmpd
-     state: restarted
-
-
-  - name: removing any redundent files from before
-    file:
-      state: absent
-      path: /home/ubuntu/app2.py
-
-  - name: copy application2.py
-    copy:
-     src: ./application2.py
-     dest: ~/app.py
-
-  - name: transplant gunicorn config file
-    copy:
-     src: ./g_unicorn_config.py
-     dest: ~/g_unicorn_config.py
-
-  - name: transplant gunirun
-    copy:
-     src: ./gunicorn_run.sh
-     dest: ~/gunicorn_run.sh
-
-  - name: Change PWD to another path
-    become: yes
-    shell: bash /home/ubuntu/gunicorn_run.sh
 
 - hosts: proxy
+  any_errors_fatal: true
+  gather_facts: yes
+  become: yes
   tasks:
-  - name: apt-update cache
-    become: yes
-    apt:
-       update_cache: yes
+    - name: Update repositories cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
 
-  - name: Installing HAProxy
-    become: yes
-    apt:
-      name: haproxy
+    - name: Installing NGINX 
+      apt:
+        name: nginx
+        state: present
 
-  - name: copy HAproxy config file from source to dest server
-    become: yes
-    template:
-     src: ./HAproxy
-     dest: /etc/haproxy/haproxy.cfg
+    - name: uploading NGINX configuration file
+      ansible.builtin.template:
+        src: ./nginx.conf.j2
+        dest: /etc/nginx/nginx.conf
 
-  - name: haproxy restart
-    become: yes
-    ansible.builtin.service:
-     name: haproxy
-     state: restarted
+    - name: Restarting NGINX
+      service:
+        name: nginx
+        state: restarted
+
+- hosts: bastion
+  any_errors_fatal: true
+  gather_facts: yes
+  become: yes
+  tasks:
+    - name: Update repositories cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install Python3-pip
+      apt:
+         name: python3-pip
+         state: present
+         
+    - name: Install required modules
+      ansible.builtin.pip:
+        name: [ 'flask', 'ping3' ]
+        executable: pip3
+        state: latest
+
+    - name: Uploading the alive.py application
+      copy:
+        src: ./alive.py
+        dest: /home/ubuntu
+        owner: ubuntu
+        group: ubuntu
+        mode: 0644
+
+    - name: Copy nodes.yaml
+      ansible.builtin.copy:
+              src: ./nodes.yaml
+              dest: /home/ubuntu
+
+    - name: Running the application
+      shell: python3 /home/ubuntu/alive.py
+      async: 3600
+      poll: 0
+
+
